@@ -1,0 +1,65 @@
+[package]
+name = "x-mcp-server"
+version = "0.1.0"
+edition = "2021"
+description = "A Model Context Protocol (MCP) server that wraps X (Twitter) API for basic utilities"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/yourusername/x-mcp-server"
+readme = "README.md"
+keywords = ["mcp", "twitter", "x", "api", "server"]
+categories = ["api-bindings", "web-programming"]
+authors = ["X MCP Server Contributors"]
+documentation = "https://docs.rs/x-mcp-server"
+homepage = "https://github.com/yourusername/x-mcp-server"
+exclude = ["/.env", "/.env.example"]
+
+[dependencies]
+# MCP SDK (simplified - using JSON-RPC directly)
+# rmcp = { version = "0.6.0", features = ["server"] }
+# rmcp-macros = "0.6.0"
+
+# Async runtime
+tokio = { version = "1.0", features = ["full"] }
+
+# HTTP client and serialization
+reqwest = { version = "0.12", features = ["json"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Environment variables
+dotenvy = "0.15"
+
+# URL encoding
+urlencoding = "2.1"
+
+# Base64 encoding for OAuth
+base64 = "0.22"
+
+# HMAC for OAuth signatures
+hmac = "0.12"
+sha1 = "0.10"
+
+# Random string generation for OAuth nonce
+rand = "0.8"
+
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tokio-test = "0.4"
+
+[[bin]]
+name = "x-mcp-server"
+path = "src/main.rs"
+
+[lib]
+name = "x_mcp_server"
+path = "src/lib.rs"
