@@ -104,18 +104,7 @@ pub struct XApiError {
     pub error_type: Option<String>,
 }
 
-/// Request to post a tweet
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PostTweetRequest {
-    pub text: String,
-    pub reply: Option<ReplySettings>,
-}
 
-/// Reply settings for tweets
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReplySettings {
-    pub in_reply_to_tweet_id: Option<String>,
-}
 
 /// Search tweets request parameters
 #[derive(Debug, Clone, Serialize, Deserialize)]

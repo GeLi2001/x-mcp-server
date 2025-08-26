@@ -14,9 +14,8 @@ homepage = "https://github.com/yourusername/x-mcp-server"
 exclude = ["/.env", "/.env.example"]
 
 [dependencies]
-# MCP SDK (simplified - using JSON-RPC directly)
-# rmcp = { version = "0.6.0", features = ["server"] }
-# rmcp-macros = "0.6.0"
+# MCP SDK
+rmcp = { version = "0.2.0", features = ["server", "macros", "transport-io", "schemars"] }
 
 # Async runtime
 tokio = { version = "1.0", features = ["full"] }
@@ -33,25 +32,19 @@ thiserror = "1.0"
 # Environment variables
 dotenvy = "0.15"
 
-# URL encoding
-urlencoding = "2.1"
 
-# Base64 encoding for OAuth
-base64 = "0.22"
 
-# HMAC for OAuth signatures
-hmac = "0.12"
-sha1 = "0.10"
 
-# Random string generation for OAuth nonce
-rand = "0.8"
 
 # Time handling
 chrono = { version = "0.4", features = ["serde"] }
 
-# Logging
+# Logging  
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Schema generation (using same version as RMCP)
+schemars = "0.8"
 
 [dev-dependencies]
 tokio-test = "0.4"

@@ -8,9 +8,9 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that p
 
 ## Features
 
-- 🔐 **Secure OAuth 1.0a Authentication** - Full support for X API authentication
+- 🔐 **Simple Bearer Token Authentication** - Easy setup with just one token
 - 👤 **User Information** - Get user profiles by username or ID
-- 🐦 **Tweet Operations** - Post tweets, reply to tweets, get specific tweets
+- 🐦 **Read-Only Operations** - Get tweets, user information, and search (no posting)
 - 🔍 **Search** - Search for tweets with various filters and options
 - 📝 **User Timeline** - Retrieve a user's recent tweets
 - 🛠️ **MCP Tools** - Standardized tools for AI integration
@@ -66,13 +66,10 @@ The server will start and listen for MCP requests on stdin/stdout.
 
 The server can be configured using environment variables:
 
-| Variable                | Description                           | Required |
-| ----------------------- | ------------------------------------- | -------- |
-| `X_CONSUMER_KEY`        | Your X API consumer key               | Yes      |
-| `X_CONSUMER_SECRET`     | Your X API consumer secret            | Yes      |
-| `X_ACCESS_TOKEN`        | Your X API access token               | Yes      |
-| `X_ACCESS_TOKEN_SECRET` | Your X API access token secret        | Yes      |
-| `RUST_LOG`              | Logging level (e.g., `info`, `debug`) | No       |
+| Variable         | Description                           | Required |
+| ---------------- | ------------------------------------- | -------- |
+| `X_BEARER_TOKEN` | Your X API Bearer Token               | Yes      |
+| `RUST_LOG`       | Logging level (e.g., `info`, `debug`) | No       |
 
 ## Available Tools
 

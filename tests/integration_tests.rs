@@ -2,40 +2,16 @@
 
 use serde_json::json;
 use x_mcp_server::{
-    auth::OAuthCredentials,
     client::XClient,
-    tools::{GetUserArgs, SearchTweetsArgs},
+    server::{GetUserArgs, SearchTweetsArgs},
     types::SearchTweetsParams,
 };
-
-/// Test that we can create OAuth credentials
-#[test]
-fn test_oauth_credentials_creation() {
-    let creds = OAuthCredentials::new(
-        "test_key".to_string(),
-        "test_secret".to_string(),
-        "test_token".to_string(),
-        "test_token_secret".to_string(),
-    );
-    
-    assert_eq!(creds.consumer_key, "test_key");
-    assert_eq!(creds.consumer_secret, "test_secret");
-    assert_eq!(creds.access_token, "test_token");
-    assert_eq!(creds.access_token_secret, "test_token_secret");
-}
 
 /// Test that we can create a client
 #[test]
 fn test_client_creation() {
-    let creds = OAuthCredentials::new(
-        "test_key".to_string(),
-        "test_secret".to_string(),
-        "test_token".to_string(),
-        "test_token_secret".to_string(),
-    );
-    
-    let _client = XClient::new(creds);
-    // Just test that creation works
+    let _client = XClient::new("test_bearer_token".to_string());
+    // Just test that creation works - we can't test much without a real token
     assert!(true);
 }
 

@@ -1,23 +1,90 @@
-//! MCP Server implementation for X API
+//! MCP Server implementation for X API using RMCP SDK
 
 use crate::client::XClient;
-use crate::error::{XError, XResult};
-use crate::tools::{
-    get_tweet, get_user, get_user_tweets, post_tweet, search_tweets, GetTweetArgs, GetUserArgs,
-    GetUserTweetsArgs, PostTweetArgs, SearchTweetsArgs,
+use crate::error::XResult;
+use crate::types::SearchTweetsParams;
+use rmcp::{
+    model::ErrorData as McpError, RoleServer, ServerHandler,
+    handler::server::{
+        router::{tool::ToolRouter},
+        tool::Parameters,
+    },
+    model::*,
+    service::RequestContext,
+    tool, tool_handler, tool_router,
+    ServiceExt, transport::stdio,
 };
-use serde_json::{json, Value};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as AsyncBufReader};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+use std::future::Future;
 
-/// X MCP Server
-pub struct XMcpServer {
-    client: XClient,
+/// Tool arguments for getting user information
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct GetUserArgs {
+    /// Username (without @) or user ID
+    pub identifier: String,
+    /// Whether the identifier is a user ID (true) or username (false)
+    #[serde(default)]
+    pub is_user_id: bool,
 }
 
+
+
+/// Tool arguments for searching tweets
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SearchTweetsArgs {
+    /// Search query
+    pub query: String,
+    /// Maximum number of results (default: 10, max: 100)
+    #[serde(default = "default_max_results")]
+    pub max_results: u32,
+    /// Include user information in results
+    #[serde(default)]
+    pub include_users: bool,
+    /// Include tweet metrics
+    #[serde(default)]
+    pub include_metrics: bool,
+}
+
+/// Tool arguments for getting a specific tweet
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct GetTweetArgs {
+    /// The tweet ID
+    pub tweet_id: String,
+}
+
+/// Tool arguments for getting user's tweets
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct GetUserTweetsArgs {
+    /// Username or user ID
+    pub identifier: String,
+    /// Whether the identifier is a user ID (true) or username (false)
+    #[serde(default)]
+    pub is_user_id: bool,
+    /// Maximum number of tweets to retrieve (default: 10)
+    #[serde(default = "default_max_results")]
+    pub max_results: u32,
+}
+
+fn default_max_results() -> u32 {
+    10
+}
+
+/// X MCP Server
+#[derive(Clone)]
+pub struct XMcpServer {
+    client: XClient,
+    tool_router: ToolRouter<XMcpServer>,
+}
+
+#[tool_router]
 impl XMcpServer {
     /// Create a new X MCP Server
     pub fn new(client: XClient) -> Self {
-        Self { client }
+        Self {
+            client,
+            tool_router: Self::tool_router(),
+        }
     }
 
     /// Create server from environment variables
@@ -28,272 +95,236 @@ impl XMcpServer {
 
     /// Run the server with stdio transport
     pub async fn run_stdio(self) -> XResult<()> {
-        let stdin = tokio::io::stdin();
-        let mut stdout = tokio::io::stdout();
-        let mut reader = AsyncBufReader::new(stdin);
-        let mut line = String::new();
-
-        // Send server info
-        let _server_info = json!({
-            "jsonrpc": "2.0",
-            "method": "initialize",
-            "params": {
-                "protocol_version": "2024-11-05",
-                "capabilities": {
-                    "tools": {
-                        "list_changed": false
-                    }
-                },
-                "server_info": {
-                    "name": "x-mcp-server",
-                    "version": crate::VERSION
-                }
-            }
-        });
-
-        tracing::info!("X MCP Server initialized");
-
-        loop {
-            line.clear();
-            match reader.read_line(&mut line).await {
-                Ok(0) => break, // EOF
-                Ok(_) => {
-                    if let Ok(request) = serde_json::from_str::<Value>(&line) {
-                        let response = self.handle_request(request).await;
-                        if let Ok(response_str) = serde_json::to_string(&response) {
-                            stdout.write_all(response_str.as_bytes()).await?;
-                            stdout.write_all(b"\n").await?;
-                            stdout.flush().await?;
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("Error reading from stdin: {}", e);
-                    break;
-                }
-            }
-        }
-
+        let service = self.serve(stdio()).await?;
+        service.waiting().await?;
         Ok(())
     }
 
-    /// Handle incoming MCP requests
-    async fn handle_request(&self, request: Value) -> Value {
-        let method = request.get("method").and_then(|m| m.as_str()).unwrap_or("");
-        let id = request.get("id").cloned();
+    /// Get user information by username or user ID
+    #[tool(description = "Get user information by username or user ID")]
+    async fn get_user(
+        &self,
+        Parameters(args): Parameters<GetUserArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let user = if args.is_user_id {
+            self.client.get_user_by_id(&args.identifier).await
+        } else {
+            self.client.get_user_by_username(&args.identifier).await
+        };
 
-        match method {
-            "initialize" => {
-                json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "result": {
-                        "protocol_version": "2024-11-05",
-                        "capabilities": {
-                            "tools": {
-                                "list_changed": false
-                            }
-                        },
-                        "server_info": {
-                            "name": "x-mcp-server",
-                            "version": crate::VERSION
-                        }
-                    }
-                })
+        match user {
+            Ok(Some(user)) => {
+                let result = json!({
+                    "success": true,
+                    "user": user
+                });
+                Ok(CallToolResult::success(vec![Content::text(
+                    serde_json::to_string_pretty(&result).unwrap_or_default(),
+                )]))
             }
-            "tools/list" => {
-                json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "result": {
-                        "tools": [
-                            {
-                                "name": "get_user",
-                                "description": "Get user information by username or user ID",
-                                "inputSchema": {
-                                    "type": "object",
-                                    "properties": {
-                                        "identifier": {
-                                            "type": "string",
-                                            "description": "Username (without @) or user ID"
-                                        },
-                                        "is_user_id": {
-                                            "type": "boolean",
-                                            "description": "Whether the identifier is a user ID (true) or username (false)",
-                                            "default": false
-                                        }
-                                    },
-                                    "required": ["identifier"]
-                                }
-                            },
-                            {
-                                "name": "post_tweet",
-                                "description": "Post a new tweet",
-                                "inputSchema": {
-                                    "type": "object",
-                                    "properties": {
-                                        "text": {
-                                            "type": "string",
-                                            "description": "The text content of the tweet"
-                                        },
-                                        "reply_to": {
-                                            "type": "string",
-                                            "description": "Optional tweet ID to reply to"
-                                        }
-                                    },
-                                    "required": ["text"]
-                                }
-                            },
-                            {
-                                "name": "search_tweets",
-                                "description": "Search for tweets",
-                                "inputSchema": {
-                                    "type": "object",
-                                    "properties": {
-                                        "query": {
-                                            "type": "string",
-                                            "description": "Search query"
-                                        },
-                                        "max_results": {
-                                            "type": "integer",
-                                            "description": "Maximum number of results (default: 10, max: 100)",
-                                            "default": 10,
-                                            "minimum": 1,
-                                            "maximum": 100
-                                        },
-                                        "include_users": {
-                                            "type": "boolean",
-                                            "description": "Include user information in results",
-                                            "default": false
-                                        },
-                                        "include_metrics": {
-                                            "type": "boolean",
-                                            "description": "Include tweet metrics",
-                                            "default": false
-                                        }
-                                    },
-                                    "required": ["query"]
-                                }
-                            },
-                            {
-                                "name": "get_tweet",
-                                "description": "Get a specific tweet by ID",
-                                "inputSchema": {
-                                    "type": "object",
-                                    "properties": {
-                                        "tweet_id": {
-                                            "type": "string",
-                                            "description": "The tweet ID"
-                                        }
-                                    },
-                                    "required": ["tweet_id"]
-                                }
-                            },
-                            {
-                                "name": "get_user_tweets",
-                                "description": "Get user's recent tweets",
-                                "inputSchema": {
-                                    "type": "object",
-                                    "properties": {
-                                        "identifier": {
-                                            "type": "string",
-                                            "description": "Username or user ID"
-                                        },
-                                        "is_user_id": {
-                                            "type": "boolean",
-                                            "description": "Whether the identifier is a user ID (true) or username (false)",
-                                            "default": false
-                                        },
-                                        "max_results": {
-                                            "type": "integer",
-                                            "description": "Maximum number of tweets to retrieve (default: 10)",
-                                            "default": 10,
-                                            "minimum": 1,
-                                            "maximum": 100
-                                        }
-                                    },
-                                    "required": ["identifier"]
-                                }
-                            }
-                        ]
-                    }
-                })
+            Ok(None) => {
+                let result = json!({
+                    "success": false,
+                    "error": "User not found"
+                });
+                Ok(CallToolResult::success(vec![Content::text(
+                    serde_json::to_string_pretty(&result).unwrap_or_default(),
+                )]))
             }
-            "tools/call" => {
-                let params = request.get("params").unwrap_or(&Value::Null);
-                let tool_name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                let arguments = params.get("arguments").cloned().unwrap_or(Value::Null);
-
-                let result = self.call_tool(tool_name, arguments).await;
-
-                json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "result": {
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": serde_json::to_string_pretty(&result).unwrap_or_else(|_| "Error serializing result".to_string())
-                            }
-                        ]
-                    }
-                })
-            }
-            _ => {
-                json!({
-                    "jsonrpc": "2.0",
-                    "id": id,
-                    "error": {
-                        "code": -32601,
-                        "message": "Method not found"
-                    }
-                })
+            Err(e) => {
+                let result = json!({
+                    "success": false,
+                    "error": format!("Error: {}", e)
+                });
+                Ok(CallToolResult::success(vec![Content::text(
+                    serde_json::to_string_pretty(&result).unwrap_or_default(),
+                )]))
             }
         }
     }
 
-    /// Call a specific tool
-    async fn call_tool(&self, tool_name: &str, arguments: Value) -> Value {
-        let result = match tool_name {
-            "get_user" => {
-                match serde_json::from_value::<GetUserArgs>(arguments) {
-                    Ok(args) => get_user(args, &self.client).await,
-                    Err(e) => Err(XError::Json(e)),
-                }
-            }
-            "post_tweet" => {
-                match serde_json::from_value::<PostTweetArgs>(arguments) {
-                    Ok(args) => post_tweet(args, &self.client).await,
-                    Err(e) => Err(XError::Json(e)),
-                }
-            }
-            "search_tweets" => {
-                match serde_json::from_value::<SearchTweetsArgs>(arguments) {
-                    Ok(args) => search_tweets(args, &self.client).await,
-                    Err(e) => Err(XError::Json(e)),
-                }
-            }
-            "get_tweet" => {
-                match serde_json::from_value::<GetTweetArgs>(arguments) {
-                    Ok(args) => get_tweet(args, &self.client).await,
-                    Err(e) => Err(XError::Json(e)),
-                }
-            }
-            "get_user_tweets" => {
-                match serde_json::from_value::<GetUserTweetsArgs>(arguments) {
-                    Ok(args) => get_user_tweets(args, &self.client).await,
-                    Err(e) => Err(XError::Json(e)),
-                }
-            }
-            _ => Err(XError::Generic(format!("Unknown tool: {}", tool_name))),
+
+
+    /// Search for tweets
+    #[tool(description = "Search for tweets")]
+    async fn search_tweets(
+        &self,
+        Parameters(args): Parameters<SearchTweetsArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut tweet_fields = vec![
+            "id".to_string(),
+            "text".to_string(),
+            "author_id".to_string(),
+            "created_at".to_string(),
+        ];
+
+        let mut user_fields = vec![];
+        let mut expansions = vec![];
+
+        if args.include_metrics {
+            tweet_fields.push("public_metrics".to_string());
+        }
+
+        if args.include_users {
+            user_fields.extend(vec![
+                "id".to_string(),
+                "name".to_string(),
+                "username".to_string(),
+            ]);
+            expansions.push("author_id".to_string());
+        }
+
+        let search_params = SearchTweetsParams {
+            query: args.query,
+            max_results: Some(args.max_results.min(100)), // API limit
+            tweet_fields: Some(tweet_fields),
+            user_fields: if user_fields.is_empty() { None } else { Some(user_fields) },
+            expansions: if expansions.is_empty() { None } else { Some(expansions) },
         };
 
-        match result {
-            Ok(content) => content,
-            Err(error) => json!({
-                "success": false,
-                "error": error.to_string()
-            }),
+        match self.client.search_tweets(search_params).await {
+            Ok(tweets) => {
+                let result = json!({
+                    "success": true,
+                    "tweets": tweets,
+                    "count": tweets.len()
+                });
+                Ok(CallToolResult::success(vec![Content::text(
+                    serde_json::to_string_pretty(&result).unwrap_or_default(),
+                )]))
+            }
+            Err(e) => {
+                let result = json!({
+                    "success": false,
+                    "error": format!("Error: {}", e)
+                });
+                Ok(CallToolResult::success(vec![Content::text(
+                    serde_json::to_string_pretty(&result).unwrap_or_default(),
+                )]))
+            }
         }
+    }
+
+    /// Get a specific tweet by ID
+    #[tool(description = "Get a specific tweet by ID")]
+    async fn get_tweet(
+        &self,
+        Parameters(args): Parameters<GetTweetArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        match self.client.get_tweet(&args.tweet_id).await {
+            Ok(Some(tweet)) => {
+                let result = json!({
+                    "success": true,
+                    "tweet": tweet
+                });
+                Ok(CallToolResult::success(vec![Content::text(
+                    serde_json::to_string_pretty(&result).unwrap_or_default(),
+                )]))
+            }
+            Ok(None) => {
+                let result = json!({
+                    "success": false,
+                    "error": "Tweet not found"
+                });
+                Ok(CallToolResult::success(vec![Content::text(
+                    serde_json::to_string_pretty(&result).unwrap_or_default(),
+                )]))
+            }
+            Err(e) => {
+                let result = json!({
+                    "success": false,
+                    "error": format!("Error: {}", e)
+                });
+                Ok(CallToolResult::success(vec![Content::text(
+                    serde_json::to_string_pretty(&result).unwrap_or_default(),
+                )]))
+            }
+        }
+    }
+
+    /// Get user's recent tweets
+    #[tool(description = "Get user's recent tweets")]
+    async fn get_user_tweets(
+        &self,
+        Parameters(args): Parameters<GetUserTweetsArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        // First, get the user to get their ID if we have a username
+        let user_id = if args.is_user_id {
+            args.identifier.clone()
+        } else {
+            match self.client.get_user_by_username(&args.identifier).await {
+                Ok(Some(user)) => user.id,
+                Ok(None) => {
+                    let result = json!({
+                        "success": false,
+                        "error": "User not found"
+                    });
+                    return Ok(CallToolResult::success(vec![Content::text(
+                        serde_json::to_string_pretty(&result).unwrap_or_default(),
+                    )]));
+                }
+                Err(e) => {
+                    let result = json!({
+                        "success": false,
+                        "error": format!("Error: {}", e)
+                    });
+                    return Ok(CallToolResult::success(vec![Content::text(
+                        serde_json::to_string_pretty(&result).unwrap_or_default(),
+                    )]));
+                }
+            }
+        };
+
+        match self
+            .client
+            .get_user_tweets(&user_id, Some(args.max_results.min(100)))
+            .await
+        {
+            Ok(tweets) => {
+                let result = json!({
+                    "success": true,
+                    "tweets": tweets,
+                    "count": tweets.len(),
+                    "user_id": user_id
+                });
+                Ok(CallToolResult::success(vec![Content::text(
+                    serde_json::to_string_pretty(&result).unwrap_or_default(),
+                )]))
+            }
+            Err(e) => {
+                let result = json!({
+                    "success": false,
+                    "error": format!("Error: {}", e)
+                });
+                Ok(CallToolResult::success(vec![Content::text(
+                    serde_json::to_string_pretty(&result).unwrap_or_default(),
+                )]))
+            }
+        }
+    }
+}
+
+#[tool_handler]
+impl ServerHandler for XMcpServer {
+    fn get_info(&self) -> ServerInfo {
+        ServerInfo {
+            protocol_version: ProtocolVersion::V_2024_11_05,
+            capabilities: ServerCapabilities::builder()
+                .enable_tools()
+                .build(),
+            server_info: Implementation {
+                name: "x-mcp-server".to_string(),
+                version: crate::VERSION.to_string(),
+            },
+            instructions: Some("This server provides X (Twitter) API tools for read-only operations. Available tools: get_user, search_tweets, get_tweet, get_user_tweets.".to_string()),
+        }
+    }
+
+    async fn initialize(
+        &self,
+        _request: InitializeRequestParam,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<InitializeResult, McpError> {
+        Ok(self.get_info())
     }
 }

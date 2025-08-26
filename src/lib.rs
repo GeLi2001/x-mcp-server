@@ -14,25 +14,20 @@
 //! ## Usage
 //!
 //! ```rust,no_run
-//! use x_mcp_server::{XMcpServer, auth::OAuthCredentials};
+//! use x_mcp_server::XMcpServer;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
-//!     // Create credentials
-//!     let credentials = OAuthCredentials::from_env()?;
-//!     
-//!     // Create and run server
+//!     // Create and run server (requires X_BEARER_TOKEN env var)
 //!     let server = XMcpServer::from_env()?;
 //!     server.run_stdio().await?;
 //!     Ok(())
 //! }
 //! ```
 
-pub mod auth;
 pub mod client;
 pub mod error;
 pub mod server;
-pub mod tools;
 pub mod types;
 
 pub use client::XClient;

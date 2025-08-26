@@ -20,6 +20,14 @@ pub enum XError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// RMCP server initialization errors
+    #[error("Server initialization error: {0}")]
+    ServerInit(String),
+
+    /// Join errors from tokio
+    #[error("Join error: {0}")]
+    Join(#[from] tokio::task::JoinError),
+
     /// Authentication errors
     #[error("Authentication error: {0}")]
     Auth(String),
@@ -40,5 +48,14 @@ pub enum XError {
 impl From<anyhow::Error> for XError {
     fn from(err: anyhow::Error) -> Self {
         XError::Generic(err.to_string())
+    }
+}
+
+impl<T> From<rmcp::service::ServerInitializeError<T>> for XError
+where
+    T: std::fmt::Display,
+{
+    fn from(err: rmcp::service::ServerInitializeError<T>) -> Self {
+        XError::ServerInit(err.to_string())
     }
 }
